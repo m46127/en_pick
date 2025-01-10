@@ -2,6 +2,7 @@ import pandas as pd
 import streamlit as st
 from charset_normalizer import from_bytes
 from io import StringIO
+from difflib import get_close_matches
 
 def detect_encoding(file):
     """charset-normalizerを使用してエンコーディングを検出"""
@@ -10,41 +11,46 @@ def detect_encoding(file):
     result = from_bytes(raw_data).best()
     return result.encoding if result else None
 
+def map_columns(df, mapping):
+    """近似一致で列名をマッピング"""
+    actual_columns = df.columns
+    mapped_columns = {}
+    for target, alias in mapping.items():
+        match = get_close_matches(target, actual_columns, n=1, cutoff=0.8)
+        if match:
+            mapped_columns[match[0]] = alias
+    return df.rename(columns=mapped_columns, inplace=False)
+
 def main():
     st.title("CSVファイル集計アプリ")
     st.write("アップロードされたCSVファイルから商品と同梱物の合計点数および追加数量を計算します。")
 
-    # ファイルアップローダー
     uploaded_file = st.file_uploader("CSVファイルをアップロードしてください", type=["csv"])
 
     if uploaded_file:
         # エンコーディングを検出
-        encoding = detect_encoding(uploaded_file)
-        st.write(f"検出されたエンコーディング: {encoding}")
+        encoding = detect_encoding(uploaded_file) or "utf-8"
+        if encoding not in ["utf-8", "cp932", "gb18030"]:
+            st.warning(f"検出されたエンコーディング '{encoding}' は未知の形式です。'utf-8'を使用します。")
+            encoding = "utf-8"
+        st.write(f"使用するエンコーディング: {encoding}")
 
         try:
             # ファイルをデコードしてデータフレームに読み込む
             raw_data = uploaded_file.read()
             decoded_data = raw_data.decode(encoding, errors="replace")
-            df = pd.read_csv(StringIO(decoded_data))
+            df = pd.read_csv(StringIO(decoded_data), lineterminator="\n")
 
             # CSVファイルの列名を表示
             st.write("CSVファイルの列名:", df.columns.tolist())
 
-            # 列名のマッピングを定義
-            column_mapping = {
-                "受注番号": "B",
-                "同梱物": "DY",
-                "購入商品（個数）": "K"
-            }
-
-            # 列名をマッピング
-            df.rename(columns=column_mapping, inplace=True)
+            # 列名のマッピング
+            column_mapping = {"受注番号": "B", "同梱物": "DY", "購入商品（個数）": "K"}
+            df = map_columns(df, column_mapping)
 
             # 必要な列名
             required_columns = ["B", "DY", "K"]
 
-            # 必要な列が存在するか確認
             if all(col in df.columns for col in required_columns):
                 # 必要なデータを抽出
                 extracted_df = df[required_columns].copy()
